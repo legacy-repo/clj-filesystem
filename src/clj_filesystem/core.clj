@@ -4,11 +4,32 @@
             ; [clojure.tools.logging :as log]
             [clojure.string :as str]))
 
-(def ^:private conn
+(def ^:dynamic *conn*)
+
+(def ^:private connection-pool
+  (atom {:oss nil
+         :minio nil
+         :s3 nil}))
+
+(def ^:private default-conn
   (atom nil))
 
-(def ^:private service
-  (atom nil))
+(defn- get-current-conn
+  []
+  (if (bound? #'*conn*)
+    *conn*
+    @default-conn))
+
+(def ^:private default-service
+  (atom "minio"))
+
+(def ^:dynamic *service*)
+
+(defn- get-current-service
+  []
+  (keyword (if (bound? #'*service*)
+             *service*
+             @default-service)))
 
 (def ^:private service-map
   {:minio {:make-bucket      mc/make-bucket
@@ -35,77 +56,79 @@
            :get-object-meta  oss/get-object-meta}})
 
 (def ^:private protocol-map
-  {:minio "s3://"
+  {:minio "minio://"
    :s3    "s3://"
    :oss   "oss://"})
 
-(defn ^:private get-service
-  [service]
-  (let [services {:minio "minio"
-                  :oss   "oss"
-                  :s3    "s3"}]
-    (if (services (keyword service))
-      (keyword service)
-      :minio)))
-
 (defn ^:private get-fn
   [fn-keyword]
-  (fn-keyword (service-map @service)))
+  (fn-keyword (service-map (get-current-service))))
 
 (defn- get-protocol
   []
-  (protocol-map @service))
+  (protocol-map (get-current-service)))
 
 (defn setup-connection
-  [fs-service fs-endpoint fs-access-key fs-secret-key]
-  (reset! service (get-service fs-service))
-  (reset! conn ((get-fn :connect) fs-endpoint fs-access-key fs-secret-key)))
+  [fs-service fs-endpoint fs-access-key fs-secret-key {:keys [default?]
+                                                       :or {default? true}}]
+  (binding [*service* fs-service]
+    (let [conn ((get-fn :connect) fs-endpoint fs-access-key fs-secret-key)]
+      (when default? (reset! default-conn conn))
+      (reset! connection-pool (merge @connection-pool
+                                     {(keyword fs-service) conn})))))
+
+(defmacro with-conn
+  [fs-service & body]
+  `(let [fs-service# ~fs-service]
+     (binding [*conn* ((keyword fs-service#) @connection-pool)
+               *service* fs-service#]
+       (when *conn* ~@body))))
 
 (defn make-bucket!
   [^String name]
-  ((get-fn :make-bucket) @conn name))
+  ((get-fn :make-bucket) (get-current-conn) name))
 
 (defn list-buckets
   []
-  ((get-fn :list-buckets) @conn))
+  ((get-fn :list-buckets) (get-current-conn)))
 
 (defn put-object!
   ([^String bucket ^String file-name]
-   ((get-fn :put-object) @conn bucket file-name))
+   ((get-fn :put-object) (get-current-conn) bucket file-name))
   ([^String bucket ^String upload-name ^String source-file-name]
-   ((get-fn :put-object) @conn bucket upload-name source-file-name)))
+   ((get-fn :put-object) (get-current-conn) bucket upload-name source-file-name)))
 
 (defn get-object
   [bucket key]
-  ((get-fn :get-object) @conn bucket key))
+  ((get-fn :get-object) (get-current-conn) bucket key))
 
 (defn list-objects
   ([bucket]
-   (list-objects bucket))
+   (list-objects bucket ""))
   ([bucket prefix]
-   ((get-fn :list-objects) @conn bucket prefix))
+   ((get-fn :list-objects) (get-current-conn) bucket prefix))
   ([bucket prefix recursive]
-   ((get-fn :list-objects) @conn bucket prefix recursive)))
+   ((get-fn :list-objects) (get-current-conn) bucket prefix recursive)))
 
 (defn remove-bucket!
   [bucket]
-  ((get-fn :remove-bucket) @conn bucket))
+  ((get-fn :remove-bucket) (get-current-conn) bucket))
 
 (defn remove-object!
   [bucket key]
-  ((get-fn :remove-object) @conn bucket key))
+  ((get-fn :remove-object) (get-current-conn) bucket key))
 
 (defn get-upload-url
   [bucket key]
-  ((get-fn :get-upload-url) @conn bucket key))
+  ((get-fn :get-upload-url) (get-current-conn) bucket key))
 
 (defn get-download-url
   [bucket key]
-  ((get-fn :get-download-url) @conn bucket key))
+  ((get-fn :get-download-url) (get-current-conn) bucket key))
 
 (defn get-object-meta
   [bucket key]
-  ((get-fn :get-object-meta) @conn bucket key))
+  ((get-fn :get-object-meta) (get-current-conn) bucket key))
 
 (defn format-objects
   [bucket objects]
@@ -115,7 +138,7 @@
 
 (defn correct-file-path
   "When you use minio service, all file paths need to reset as the local path.
-   e.g. s3://bucket-name/object-key --> /datains/minio/bucket-name/object-key
+   e.g. minio://bucket-name/object-key --> /datains/minio/bucket-name/object-key
 
    ; TODO: need to support more types for e's value.
   "
@@ -124,7 +147,7 @@
         prefix   (str/replace fs-rootdir #"([^\/])$" "$1/")
         pattern  (re-pattern protocol)
         func     (fn [string] (str/replace string pattern prefix))]
-    (if (= @service :minio)
+    (if (= (get-current-service) :minio)
       (into {}
             (map (fn [[key value]]
                    (vector key
@@ -137,7 +160,7 @@
 
 (defn correct-file-path-reverse
   "When you use minio service, all file paths need to reset as the local path.
-   e.g. /datains/minio/bucket-name/object-key --> s3://bucket-name/object-key
+   e.g. /datains/minio/bucket-name/object-key --> minio://bucket-name/object-key
 
    ; TODO: need to support more types for e's value.
   "
@@ -145,7 +168,7 @@
   (let [protocol (get-protocol)
         pattern  (re-pattern (str/replace fs-rootdir #"([^\/])$" "$1/"))
         func     (fn [string] (str/replace string pattern protocol))]
-    (if (= @service :minio)
+    (if (= (get-current-service) :minio)
       (into {}
             (map (fn [[key value]]
                    (vector key

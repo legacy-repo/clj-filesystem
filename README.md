@@ -11,7 +11,7 @@ Latest stable release is [0.1.0]
 [Leiningen](http://leiningen.org/) dependency information:
 
 ```clojure
-[clj-filesystem "1.0.0"]
+[clj-filesystem "0.1.0"]
 ```
 
 ## Usage
