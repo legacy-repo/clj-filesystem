@@ -6,7 +6,8 @@
 
 (def ^:dynamic *conn*)
 
-(def ^:private connection-pool
+(def connection-pool
+  ;; TODO: Connection-pool can't be a private when it is used in with-conn macro.
   (atom {:oss nil
          :minio nil
          :s3 nil}))
