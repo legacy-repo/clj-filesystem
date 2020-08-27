@@ -1,36 +1,25 @@
 (ns clj-filesystem.core
   (:require [minio-clj.core :as mc]
             [oss-clj.core :as oss]
-            ; [clojure.tools.logging :as log]
+            [clojure.tools.logging :as log]
             [clojure.string :as str]))
 
-(def ^:dynamic *conn*)
-
-(def connection-pool
-  ;; TODO: Connection-pool can't be a private when it is used in with-conn macro.
+(def services
+  ;; TODO: services can't be a private when it is used in with-conn macro.
   (atom {:oss nil
          :minio nil
          :s3 nil}))
 
-(def ^:private default-conn
+(def ^:private service
   (atom nil))
+
+(def ^:dynamic *conn*)
 
 (defn- get-current-conn
   []
   (if (bound? #'*conn*)
     *conn*
-    @default-conn))
-
-(def ^:private default-service
-  (atom "minio"))
-
-(def ^:dynamic *service*)
-
-(defn- get-current-service
-  []
-  (keyword (if (bound? #'*service*)
-             *service*
-             @default-service)))
+    (throw (Exception. "Not in with-conn environment"))))
 
 (def ^:private service-map
   {:minio {:make-bucket      mc/make-bucket
@@ -63,27 +52,44 @@
 
 (defn ^:private get-fn
   [fn-keyword]
-  (fn-keyword (service-map (get-current-service))))
+  (fn-keyword (service-map (keyword @service))))
 
 (defn- get-protocol
   []
-  (protocol-map (get-current-service)))
+  (protocol-map (keyword @service)))
+
+(defn connect
+  []
+  (let [conn-info (@services (keyword @service))
+        {:keys [fs-endpoint fs-access-key fs-secret-key]} conn-info]
+    (log/debug (format "Connect service: %s %s" @service conn-info))
+    (if conn-info
+      ((get-fn :connect) fs-endpoint fs-access-key fs-secret-key)
+      (throw (Exception. "Need to run setup-connection function firstly.")))))
 
 (defn setup-connection
-  [fs-service fs-endpoint fs-access-key fs-secret-key {:keys [default?]
-                                                       :or {default? true}}]
-  (binding [*service* fs-service]
-    (let [conn ((get-fn :connect) fs-endpoint fs-access-key fs-secret-key)]
-      (when default? (reset! default-conn conn))
-      (reset! connection-pool (merge @connection-pool
-                                     {(keyword fs-service) conn})))))
+  [fs-service fs-endpoint fs-access-key fs-secret-key]
+  (let [conn {:fs-endpoint fs-endpoint
+              :fs-access-key fs-access-key
+              :fs-secret-key fs-secret-key}]
+    (reset! service fs-service)
+    (reset! services (merge @services
+                            {(keyword fs-service) conn}))))
+
+(defmacro swallow-exceptions [& body]
+  `(try ~@body (catch Exception e#)))
 
 (defmacro with-conn
   [fs-service & body]
   `(let [fs-service# ~fs-service]
-     (binding [*conn* ((keyword fs-service#) @connection-pool)
-               *service* fs-service#]
-       (when *conn* ~@body))))
+     (reset! service fs-service#)
+     (binding [*conn* (connect)]
+       (try
+         (when *conn* ~@body)
+         (catch Exception e# (str "Exception: " (.getMessage e#)))
+         ;; TODO: How to avoid leak memory?
+         ;; The MinioClient has not shutdown method.
+         (finally (swallow-exceptions (.shutdown *conn*)))))))
 
 (defn make-bucket!
   [^String name]
@@ -144,20 +150,20 @@
    ; TODO: need to support more types for e's value.
   "
   [e fs-rootdir]
+  (reset! service "minio")
   (let [protocol (get-protocol)
         prefix   (str/replace fs-rootdir #"([^\/])$" "$1/")
         pattern  (re-pattern protocol)
         func     (fn [string] (str/replace string pattern prefix))]
-    (if (= (get-current-service) :minio)
-      (into {}
-            (map (fn [[key value]]
-                   (vector key
-                           (cond
-                             (map? value) (correct-file-path value fs-rootdir)
-                             (vector? value) (map #(func %) value)
-                             (string? value) (func value)
-                             :else value))) e))
-      e)))
+    (into {}
+          (map (fn [[key value]]
+                 (vector key
+                         (cond
+                           (map? value) (correct-file-path value fs-rootdir)
+                           (vector? value) (map #(func %) value)
+                           (string? value) (func value)
+                           :else value))) e))
+    e))
 
 (defn correct-file-path-reverse
   "When you use minio service, all file paths need to reset as the local path.
@@ -166,16 +172,16 @@
    ; TODO: need to support more types for e's value.
   "
   [e fs-rootdir]
+  (reset! service "minio")
   (let [protocol (get-protocol)
         pattern  (re-pattern (str/replace fs-rootdir #"([^\/])$" "$1/"))
         func     (fn [string] (str/replace string pattern protocol))]
-    (if (= (get-current-service) :minio)
-      (into {}
-            (map (fn [[key value]]
-                   (vector key
-                           (cond
-                             (map? value) (correct-file-path value fs-rootdir)
-                             (vector? value) (map #(func %) value)
-                             (string? value) (func value)
-                             :else value))) e))
-      e)))
+    (into {}
+          (map (fn [[key value]]
+                 (vector key
+                         (cond
+                           (map? value) (correct-file-path value fs-rootdir)
+                           (vector? value) (map #(func %) value)
+                           (string? value) (func value)
+                           :else value))) e))
+    e))
