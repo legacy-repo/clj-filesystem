@@ -27,6 +27,7 @@
            :list-buckets     mc/list-buckets
            :put-object       mc/put-object
            :get-object       mc/get-object
+           :download-object  mc/download-object
            :list-objects     mc/list-objects
            :remove-bucket    mc/remove-bucket!
            :remove-object    mc/remove-object!
@@ -38,6 +39,7 @@
            :list-buckets     oss/list-buckets
            :put-object       oss/put-object
            :get-object       oss/get-object
+           :download-object  oss/download-object
            :list-objects     oss/list-objects
            :remove-bucket    oss/remove-bucket!
            :remove-object    oss/remove-object!
@@ -108,6 +110,10 @@
 (defn get-object
   [bucket key]
   ((get-fn :get-object) (get-current-conn) bucket key))
+
+(defn download-object
+  [bucket key localpath]
+  ((get-fn :download-object) (get-current-conn) bucket key localpath))
 
 (defn list-objects
   ([bucket]
