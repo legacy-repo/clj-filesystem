@@ -156,8 +156,7 @@
    ; TODO: need to support more types for e's value.
   "
   [e fs-rootdir]
-  (reset! service "minio")
-  (let [protocol (get-protocol)
+  (let [protocol "minio://"
         prefix   (str/replace fs-rootdir #"([^\/])$" "$1/")
         pattern  (re-pattern protocol)
         func     (fn [string] (str/replace string pattern prefix))]
@@ -178,8 +177,7 @@
    ; TODO: need to support more types for e's value.
   "
   [e fs-rootdir]
-  (reset! service "minio")
-  (let [protocol (get-protocol)
+  (let [protocol "minio://"
         pattern  (re-pattern (str/replace fs-rootdir #"([^\/])$" "$1/"))
         func     (fn [string] (str/replace string pattern protocol))]
     (into {}
