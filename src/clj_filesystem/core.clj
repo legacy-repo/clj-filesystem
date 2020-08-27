@@ -52,11 +52,11 @@
    :s3    "s3://"
    :oss   "oss://"})
 
-(defn ^:private get-fn
+(defn- get-fn
   [fn-keyword]
   (fn-keyword (service-map (keyword @service))))
 
-(defn- get-protocol
+(defn get-protocol
   []
   (protocol-map (keyword @service)))
 
@@ -147,7 +147,7 @@
   [bucket objects]
   (pmap (fn [object]
           (assoc object
-                 :Path (str (get-protocol) bucket "/" (:Key object)))) objects))
+                 :path (str (get-protocol) bucket "/" (:key object)))) objects))
 
 (defn correct-file-path
   "When you use minio service, all file paths need to reset as the local path.
