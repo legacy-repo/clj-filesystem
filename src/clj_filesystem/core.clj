@@ -10,7 +10,7 @@
          :minio nil
          :s3 nil}))
 
-(def ^:private service
+(def service
   (atom nil))
 
 (def ^:dynamic *conn*)
