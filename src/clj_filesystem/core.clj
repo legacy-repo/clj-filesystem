@@ -167,8 +167,7 @@
                            (map? value) (correct-file-path value fs-rootdir)
                            (vector? value) (map #(func %) value)
                            (string? value) (func value)
-                           :else value))) e))
-    e))
+                           :else value))) e))))
 
 (defn correct-file-path-reverse
   "When you use minio service, all file paths need to reset as the local path.
@@ -184,8 +183,7 @@
           (map (fn [[key value]]
                  (vector key
                          (cond
-                           (map? value) (correct-file-path value fs-rootdir)
+                           (map? value) (correct-file-path-reverse value fs-rootdir)
                            (vector? value) (map #(func %) value)
                            (string? value) (func value)
-                           :else value))) e))
-    e))
+                           :else value))) e))))
